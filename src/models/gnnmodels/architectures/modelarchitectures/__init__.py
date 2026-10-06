@@ -1,0 +1,1 @@
+from .gcnmodel import GCNModel
