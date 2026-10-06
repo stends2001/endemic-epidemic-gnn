@@ -7,7 +7,8 @@ model_colors = {
 
     # gnn
     'gcnmodel'          : '#B77914',
-    'gatmodel'          : "#1467B7"
+    'gatmodel'          : "#1467B7",
+    'hhh4gnnmodel'      : "#1467B7",
     
 }
 

@@ -213,8 +213,8 @@ class PredictionManager:
                     if params.log is not None:
                         df_denorm = reverse_log(df_denorm, col, params.log)
 
-        if self.epiconfig.target_column == 'cases':
-            raise ValueError('not dealt with poissonlosses')
+        # if self.epiconfig.target_column == 'cases':
+        #     raise ValueError('not dealt with poissonlosses')
 
         return df_denorm
 
