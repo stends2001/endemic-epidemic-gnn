@@ -30,11 +30,13 @@ class GNNModelGlobalhParamsMixin:
                            patience:        int             = 15,
                            min_delta:       float           = 1e-4,                            
                            optimizer:       str             = 'adam',
-                           loss:            str             = 'mse',                           
+                           loss:            str             = 'auto',                           
                            scheduler:       str             = 'step',
                            # kwargs
                            optimizer_kwargs: dict[str, Any] | None = None,                           
                            scheduler_kwargs: dict[str, Any] | None = None,                    
+                           loss_kwargs:     dict[str, Any] | None = None,
+                           shuffle:         bool            = False,
                            ) -> None:
         """
         Prepares model for training by setting global hyperparameters.
@@ -51,16 +53,27 @@ class GNNModelGlobalhParamsMixin:
             Minimal change in loss to consider 'improvement'.
         optimizer: str = 'adam'
             Optimizer to use when training. Options can be found in `_get_optimizer()`.
-        loss: str = 'mse'                          
+        loss: str = 'auto'                          
             Loss to use when training. Options can be found in `LossHandler`.
+            ``'auto'`` picks the loss that matches the output head: ``'mse'`` for
+            point heads, ``'pinball'`` for quantile heads, ``'nb'`` for (mu, alpha).
         Scheduler: str = 'step'
             Scheduler to use when training. Options can be found in `_get_scheduler()`.
         optimizer_kwargs:Optional[Dict[str, Any]] = None  
             any kwargs relevant to optimizer                         
         scheduler_kwargs:Optional[Dict[str, Any]] = None
             any kwargs relevant to scheduler
+        loss_kwargs: Optional[Dict[str, Any]] = None
+            kwargs for the loss class. For ``'pinball'``, ``quantiles`` defaults to
+            ``EpiConfig.quantiles``.
+        shuffle: bool = False
+            Visit the training weeks in a new random order every epoch (seeded via
+            ``torch.manual_seed``). Without it, a model without random
+            initialisation trains identically for every seed.
         """
         self._check_status(['model_hparams_set'])
+
+        loss, loss_kwargs = self._resolve_loss(loss, dict(loss_kwargs or {}))
 
         global_hparams_config: dict[str, Any] = {
             'lr'                : lr,
@@ -72,16 +85,19 @@ class GNNModelGlobalhParamsMixin:
             'scheduler'         : scheduler,
 
             'optimizer_kwargs'  : optimizer_kwargs,
-            'scheduler_kwargs'  : scheduler_kwargs
+            'scheduler_kwargs'  : scheduler_kwargs,
+            'loss_kwargs'       : loss_kwargs,
+            'shuffle'           : shuffle
         }
         
         # ==== CONSTANTS ===== #
         self.n_epochs           = n_epochs
         self.patience           = patience
         self.min_delta          = min_delta
+        self.shuffle_train      = shuffle
 
         # ==== LOSS ==== #
-        self.loss       = LossManager(loss)  
+        self.loss       = LossManager(loss, **loss_kwargs)  
 
         # ==== OPTIMIZER ==== #
         if optimizer_kwargs is None:
@@ -103,6 +119,29 @@ class GNNModelGlobalhParamsMixin:
         self.config_info['global_hparams']  = global_hparams_config
         self._update_status('global_hparams_set')
 
+
+    def _resolve_loss(self, loss: str, loss_kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Pick the default loss for the output head and check that they match."""
+        head = getattr(self, 'output_head', 'point')
+        expected = {'point': 'mse', 'quantile': 'pinball', 'nb': 'nb'}
+
+        if loss == 'auto':
+            loss = expected[head]
+
+        if head == 'quantile' and loss != 'pinball':
+            raise ValueError(f"A quantile head needs loss='pinball', got {loss!r}.")
+        if head == 'nb' and loss != 'nb':
+            raise ValueError(f"An NB head needs loss='nb', got {loss!r}.")
+        if head == 'point' and loss in ('pinball', 'nb'):
+            raise ValueError(f"A point head cannot be trained with loss={loss!r}.")
+
+        if loss == 'pinball':
+            loss_kwargs.setdefault('quantiles', list(self.epiconfig.quantiles or []))
+            if list(loss_kwargs['quantiles']) != list(self.epiconfig.quantiles or []):
+                raise ValueError('pinball quantiles must equal EpiConfig.quantiles, '
+                                 'since the head and prediction columns follow those.')
+
+        return loss, loss_kwargs
 
     def _get_optimizer(self, 
                        optimizer_name:  str, 
