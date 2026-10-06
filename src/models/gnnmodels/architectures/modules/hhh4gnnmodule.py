@@ -7,7 +7,7 @@ from torch_geometric.utils import remove_self_loops, scatter
 
 class HHH4GNNModule(nn.Module):
     """
-    HHH4 - Module (minimal)
+    HHH4-GNN - Module (V1: constant rates)
 
     The endemic-epidemic model (hhh4) as a torch module. For every region i it
     predicts the NB mean of the count ``horizon_size`` steps after the input
@@ -119,15 +119,21 @@ class HHH4GNNModule(nn.Module):
         # endemic
         endemic = torch.exp(self.end_intercept + z @ self.end_season)                    # [N, H]
 
+        # time-varying shifts of the log-rates (zero in V1; V2 / V3 override)
+        epi_shift, ne_shift = self._rate_shifts(z, y, ybar)                             # [N, H] each
+
         # epidemic: rate x lag-weighted own counts
         own      = y @ torch.softmax(self.epi_lag_logits, dim=-1).t()                    # [N, H]
-        lam      = torch.exp(self.epi_log_rate.view(1, -1) + self._centred(self.epi_node).view(-1, 1))
+        lam      = torch.exp(self.epi_log_rate.view(1, -1) + self._centred(self.epi_node).view(-1, 1) + epi_shift)
         epidemic = lam * own
 
         # neighbourhood: rate x lag-weighted neighbour counts
         nb            = ybar @ torch.softmax(self.ne_lag_logits, dim=-1).t()             # [N, H]
-        phi           = torch.exp(self.ne_log_rate.view(1, -1) + self._centred(self.ne_node).view(-1, 1))
+        phi           = torch.exp(self.ne_log_rate.view(1, -1) + self._centred(self.ne_node).view(-1, 1) + ne_shift)
         neighbourhood = phi * nb
+
+        # kept for inspection: rate multipliers exp(shift) of the latest forward pass
+        self.last_rate_multipliers = (torch.exp(epi_shift).detach(), torch.exp(ne_shift).detach())
 
         mu    = (endemic + epidemic + neighbourhood).clamp(min=1e-6)
         alpha = torch.exp(self.log_alpha).view(-1, 1).expand_as(mu)
@@ -135,6 +141,14 @@ class HHH4GNNModule(nn.Module):
         if return_components:
             return (mu, alpha), {'endemic': endemic, 'epidemic': epidemic, 'neighbourhood': neighbourhood}
         return mu, alpha
+
+    def _rate_shifts(self, z: torch.Tensor, y: torch.Tensor, ybar: torch.Tensor):
+        """
+        Shifts of the epidemic and neighbourhood log-rates, [N, H] each.
+        V1: none, the rates are constant over time.
+        """
+        zero = y.new_zeros(y.shape[0], self.horizon_size)
+        return zero, zero
 
     def regularization(self) -> torch.Tensor:
         """ridge on the centred region effects; added to the loss by Strategy.training_step"""

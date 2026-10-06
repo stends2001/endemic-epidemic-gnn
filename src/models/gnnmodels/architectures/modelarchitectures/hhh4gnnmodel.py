@@ -18,7 +18,7 @@ COMPONENT_COLORS = {'endemic': '#2a78d6', 'epidemic': '#eb6834', 'neighbourhood'
 
 class HHH4GNNModel(GNNModel):
     """
-    HHH4-GNN - Model
+    HHH4-GNN - Model (V1: constant rates)
 
     Endemic-epidemic (hhh4) model on the graph: the NB mean is the sum of an
     endemic, an epidemic (own region) and a neighbourhood branch, see
@@ -29,6 +29,7 @@ class HHH4GNNModel(GNNModel):
     ``EpiConfig(target_column='cases', lag_column='cases')``.
     """
     _expected_databuilder = 'GraphDataBuilder'
+    _module_class         = HHH4GNNModule      # V2 / V3 set their own module
 
     def __init__(self,
                  databuilder: GraphDataBuilder,
@@ -43,7 +44,8 @@ class HHH4GNNModel(GNNModel):
     def set_model_hparams(self,
                           node_penalty:     float           = 0.01,
                           case_feature:     str | None      = None,
-                          endemic_features: list[str] | None = None):
+                          endemic_features: list[str] | None = None,
+                          **module_kwargs):
         """
         Parameters
         ----------
@@ -55,7 +57,10 @@ class HHH4GNNModel(GNNModel):
             ``'<lag_column>_lag0'``, e.g. ``'cases_lag0'``.
         endemic_features : list[str] | None
             Features entering the endemic branch (log-linear). Default: every
-            other feature, e.g. ``['tt_sin_w', 'tt_cos_w']``.
+            other feature, e.g. ``['tt_sin_w', 'tt_cos_w']``. V2 / V3 use the
+            same features for the seasonal rates.
+        **module_kwargs
+            Extra arguments of the module class (used by V3).
         """
         self._check_counts()
         self._set_output_head('nb')
@@ -74,7 +79,7 @@ class HHH4GNNModel(GNNModel):
         case_idx    = feature_names.index(case_feature)
         season_idx  = [feature_names.index(f) for f in endemic_features]
 
-        self.model = HHH4GNNModule(
+        self.model = self._module_class(
             num_nodes     = len(self.databuilder.dataorchestrator.data_context.local_shapedata),
             seq_length    = self.epiconfig.sequence_length,
             horizon_size  = self.epiconfig.horizon_size,
@@ -82,12 +87,14 @@ class HHH4GNNModel(GNNModel):
             season_idx    = season_idx,
             mean_count    = self._train_target_mean(),
             node_penalty  = node_penalty,
+            **module_kwargs,
         ).to(self.device)
 
         self.config_info['model_hparams'] = {
             'node_penalty':     node_penalty,
             'case_feature':     case_feature,
             'endemic_features': list(endemic_features),
+            **module_kwargs,
         }
 
         self._update_status('model_hparams_set')

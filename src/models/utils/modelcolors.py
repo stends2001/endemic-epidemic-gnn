@@ -9,6 +9,8 @@ model_colors = {
     'gcnmodel'          : '#B77914',
     'gatmodel'          : "#1467B7",
     'hhh4gnnmodel'      : "#1467B7",
+    'hhh4gnnmodelv2'      : "#14B7AF",
+    'hhh4gnnmodelv3'      : "#5214B7",        
     
 }
 
